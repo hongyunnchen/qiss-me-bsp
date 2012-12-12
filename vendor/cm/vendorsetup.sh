@@ -1,0 +1,12 @@
+add_lunch_combo cm_jordan-userdebug
+add_lunch_combo cm_jordan-eng
+add_lunch_combo cm_crespo-userdebug
+add_lunch_combo cm_crespo-eng
+add_lunch_combo cm_ace-userdebug
+add_lunch_combo cm_ace-eng
+add_lunch_combo cm_galaxysmtd-userdebug
+add_lunch_combo cm_galaxysmtd-eng
+add_lunch_combo cm_bravo-userdebug
+add_lunch_combo cm_bravo-eng
+add_lunch_combo cm_jordan_plus-userdebug
+add_lunch_combo cm_jordan_plus-eng

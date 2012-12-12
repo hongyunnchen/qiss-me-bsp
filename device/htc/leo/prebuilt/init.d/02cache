@@ -1,0 +1,11 @@
+#!/system/bin/sh
+
+cache_partition=`grep cache /proc/mtd | cut -d: -f1 | sed 's/mtd/mtdblock/'`
+
+umount /cache
+rmdir /cache
+mkdir /mnt/cache
+mkdir /data/cache
+mount -t yaffs2 -o rw /dev/block/$cache_partition /mnt/cache
+ln -s /data/cache /cache
+ln -s /mnt/cache/recovery /cache/recovery

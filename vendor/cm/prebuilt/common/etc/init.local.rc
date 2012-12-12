@@ -1,0 +1,22 @@
+# CyanogenMod Extras
+
+# Compcache - handle at boot
+service compcache /system/bin/handle_compcache
+    user root
+    group root
+    oneshot
+#Modefied by Jerry.Qian, for MYUI-01521, the sound of boot music is too loud, 2012/03/05
+###Bootsound - Start ###
+#service bootsound /system/bin/bootsound
+#user media
+#group audio
+#disabled
+#oneshot
+
+#on property:init.svc.bootanim=running
+#start bootsound
+
+#on property:init.svc.bootanim=stopped
+#stop bootsound
+### Bootsound - End ### 
+#Modefied by Jerry.Qian, for MYUI-01521, the sound of boot music is too loud, 2012/03/05

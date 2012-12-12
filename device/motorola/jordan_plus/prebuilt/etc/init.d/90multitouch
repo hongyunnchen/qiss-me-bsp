@@ -1,0 +1,16 @@
+#!/system/bin/sh
+#
+# load multitouch module
+
+# Module location
+MODULE="/system/lib/modules/multitouch.ko"
+
+# Max number of fingers
+MAX_TOUCH=`getprop persist.sys.multitouch`
+if [ -z "$MAX_TOUCH" ]; then
+# Brian hack multi touch to 10 point
+    MAX_TOUCH=10
+fi
+
+# Load the module
+insmod $MODULE touch_num=$MAX_TOUCH

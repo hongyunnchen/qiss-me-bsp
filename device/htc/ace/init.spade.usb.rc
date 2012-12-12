@@ -1,0 +1,50 @@
+#add by Jerry.Qian for usb tethering, DHD
+on property:sys.usb.config=none
+    stop adbd
+    write /sys/class/usb_composite/adb/enable 0
+    write /sys/class/usb_composite/usb_mass_storage/enable 0
+    write /sys/class/usb_composite/rndis/enable 0
+    setprop sys.usb.state $sys.usb.config
+#add by Jerry.Qian for usb tethering, DHD
+	
+on property:sys.usb.config=adb
+    write /sys/class/usb_composite/adb/enable 1
+    start adbd
+    setprop sys.usb.state $sys.usb.config
+	
+#modified by Jerry.Qian for usb tethering, DHD
+on property:sys.usb.config=mass_storage
+    write /sys/class/usb_composite/usb_mass_storage/enable 1
+    #start adbd
+    setprop sys.usb.state $sys.usb.config
+#modified by Jerry.Qian for usb tethering, DHD
+
+on property:sys.usb.config=mass_storage,adb
+    write /sys/class/usb_composite/usb_mass_storage/enable 1
+    write /sys/class/usb_composite/adb/enable 1
+    start adbd
+    setprop sys.usb.state $sys.usb.config
+
+on property:sys.usb.config=rndis
+    write /sys/class/usb_composite/rndis/enable 1
+    setprop sys.usb.state $sys.usb.config
+
+on property:sys.usb.config=rndis,adb
+    write /sys/class/usb_composite/rndis/enable 1
+    write /sys/class/usb_composite/adb/enable 1
+    start adbd
+    setprop sys.usb.state $sys.usb.config
+
+#modified by Jerry.Qian for usb tethering, DHD
+#on property:sys.usb.config=mass_storage,rndis,adb
+    #write /sys/class/usb_composite/usb_mass_storage/enable 1
+    #write /sys/class/usb_composite/rndis/enable 1
+    #write /sys/class/usb_composite/adb/enable 1
+    #start adbd
+    #setprop sys.usb.state $sys.usb.config
+#modified by Jerry.Qian for usb tethering, DHD
+
+#add by Jerry.Qian for usb tethering working with adb disable
+on property:persist.sys.usb.config=*
+    setprop sys.usb.config $persist.sys.usb.config
+#add by Jerry.Qian for usb tethering working with adb disable

@@ -1,0 +1,9 @@
+#!/sbin/sh
+
+cat /proc/cmdline | awk '/offmode_charging/{exit 1}' && result=other || result=offmode
+
+if [ "$result" = "offmode" ];then
+	/sbin/charger_desire
+else
+	/sbin/recovery	
+fi

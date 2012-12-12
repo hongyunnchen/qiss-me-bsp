@@ -1,0 +1,7 @@
+#!/system/bin/sh
+#bootsound - plays a sound at boot
+#script created by Iory.Xu
+
+stagefright -a -o /data/system/theme/boots/bootaudio.mp3
+
+exit 0

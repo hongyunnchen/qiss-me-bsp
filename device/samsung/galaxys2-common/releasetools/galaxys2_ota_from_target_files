@@ -1,0 +1,378 @@
+#!/usr/bin/env python
+#
+# Copyright (C) 2008 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import sys
+import os
+import galaxys2_common as common
+
+LOCAL_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+RELEASETOOLS_DIR = os.path.abspath(os.path.join(LOCAL_DIR, '../../../build/tools/releasetools'))
+TARGET_DIR = os.getenv('OUT')
+
+# Add releasetools directory to python path
+sys.path.append(RELEASETOOLS_DIR)
+
+# Import the existing file so we just have to rewrite the modules we need.
+# This is a nasty hack as the filename doesn't end in .py, but it works
+filename = os.path.join(RELEASETOOLS_DIR, "ota_from_target_files")
+ota_from_target_files = common.load_module_from_file('ota_from_target_files', filename)
+
+from ota_from_target_files import *
+import galaxys2_edify_generator as edify_generator
+
+__doc__ = ota_from_target_files.__doc__
+
+def CopyBootFiles(input_zip, output_zip):
+    output_zip.write(os.path.join(TARGET_DIR, "boot.img"),"boot.img")
+
+def WriteFullOTAPackage(input_zip, output_zip):
+  # TODO: how to determine this?  We don't know what version it will
+  # be installed on top of.  For now, we expect the API just won't
+  # change very often.
+  script = edify_generator.EdifyGenerator(3, OPTIONS.info_dict)
+
+  metadata = {"post-build": GetBuildProp("ro.build.fingerprint", input_zip),
+              "pre-device": GetBuildProp("ro.product.device", input_zip),
+              "post-timestamp": GetBuildProp("ro.build.date.utc", input_zip),
+              }
+
+  device_specific = common.DeviceSpecificParams(
+      input_zip=input_zip,
+      input_version=OPTIONS.info_dict["recovery_api_version"],
+      output_zip=output_zip,
+      script=script,
+      input_tmp=OPTIONS.input_tmp,
+      metadata=metadata,
+      info_dict=OPTIONS.info_dict)
+
+  AppendAssertions(script, input_zip)
+  device_specific.FullOTA_Assertions()
+  if OPTIONS.backuptool:
+    script.Mount("/system")
+    script.RunBackup("backup")
+    script.Unmount("/system")
+
+  script.ShowProgress(0.5, 0)
+
+  if OPTIONS.wipe_user_data:
+    script.FormatPartition("/data")
+
+  script.Unmount("/system")
+  script.FormatPartition("/system")
+  script.Mount("/system")
+  script.UnpackPackageDir("recovery", "/system")
+  script.UnpackPackageDir("system", "/system")
+
+  (symlinks, retouch_files) = CopySystemFiles(input_zip, output_zip)
+  script.MakeSymlinks(symlinks)
+  if OPTIONS.aslr_mode:
+    script.RetouchBinaries(retouch_files)
+  else:
+    script.UndoRetouchBinaries(retouch_files)
+
+  CopyBootFiles(input_zip, output_zip)
+
+  Item.GetMetadata(input_zip)
+  Item.Get("system").SetPermissions(script)
+
+  script.ShowProgress(0.2, 0)
+
+  if OPTIONS.backuptool:
+    script.ShowProgress(0.2, 10)
+    script.RunBackup("restore")
+
+  script.ShowProgress(0.2, 10)
+  script.EMMCWriteRawImage("/dev/block/mmcblk0p5", "boot.img")
+
+  script.ShowProgress(0.1, 0)
+  device_specific.FullOTA_InstallEnd()
+
+  if OPTIONS.extra_script is not None:
+    script.AppendExtra(OPTIONS.extra_script)
+
+  script.UnmountAll()
+  script.AddToZip(input_zip, output_zip)
+  WriteMetadata(metadata, output_zip)
+ota_from_target_files.WriteFullOTAPackage = WriteFullOTAPackage
+
+
+#{modified by Henry,for bootimg ota incr update,2012-04-18
+def WriteIncrementalOTAPackage(target_zip, source_zip, output_zip):
+#    print "Incremental OTA Packages are not support on the Samsung Galaxy S at this time"
+  print "Incremental OTA Packages test script for Samsung GalaxyS"
+#    sys.exit(1)
+  source_version = OPTIONS.source_info_dict["recovery_api_version"]
+  target_version = OPTIONS.target_info_dict["recovery_api_version"]
+
+  if source_version == 0:
+    print ("WARNING: generating edify script for a source that "
+           "can't install it.")
+  script = edify_generator.EdifyGenerator(source_version, OPTIONS.target_info_dict)
+
+  metadata = {"pre-device": GetBuildProp("ro.product.device", source_zip),
+              "post-timestamp": GetBuildProp("ro.build.date.utc", target_zip),
+              }
+
+  device_specific = common.DeviceSpecificParams(
+      source_zip=source_zip,
+      source_version=source_version,
+      target_zip=target_zip,
+      target_version=target_version,
+      output_zip=output_zip,
+      script=script,
+      metadata=metadata,
+      info_dict=OPTIONS.info_dict)
+
+  print "Loading target..."
+  target_data = LoadSystemFiles(target_zip)
+  print "Loading source..."
+  source_data = LoadSystemFiles(source_zip)
+
+  verbatim_targets = []
+  patch_list = []
+  diffs = []
+  largest_source_size = 0
+  for fn in sorted(target_data.keys()):
+    tf = target_data[fn]
+    assert fn == tf.name
+    sf = source_data.get(fn, None)
+
+    if sf is None or fn in OPTIONS.require_verbatim:
+      # This file should be included verbatim
+      if fn in OPTIONS.prohibit_verbatim:
+        raise common.ExternalError("\"%s\" must be sent verbatim" % (fn,))
+      print "send", fn, "verbatim"
+      tf.AddToZip(output_zip)
+      verbatim_targets.append((fn, tf.size))
+    elif tf.sha1 != sf.sha1:
+      # File is different; consider sending as a patch
+      diffs.append(common.Difference(tf, sf))
+    else:
+      # Target file identical to source.
+      pass
+
+  common.ComputeDifferences(diffs)
+
+  for diff in diffs:
+    tf, sf, d = diff.GetPatch()
+    if d is None or len(d) > tf.size * OPTIONS.patch_threshold:
+      # patch is almost as big as the file; don't bother patching
+      tf.AddToZip(output_zip)
+      verbatim_targets.append((tf.name, tf.size))
+    else:
+      common.ZipWriteStr(output_zip, "patch/" + tf.name + ".p", d)
+      patch_list.append((tf.name, tf, sf, tf.size, common.sha1(d).hexdigest()))
+      largest_source_size = max(largest_source_size, sf.size)
+
+  source_fp = GetBuildProp("ro.build.fingerprint", source_zip)
+  target_fp = GetBuildProp("ro.build.fingerprint", target_zip)
+  metadata["pre-build"] = source_fp
+  metadata["post-build"] = target_fp
+
+  #{Add by Henry.Wu,for MYUI-02183,2012-03-26
+  #script.Unmount("/system")
+  # Add by Henry.Wu,for MYUI-02183,2012-03-26}
+  script.Mount("/system")
+  script.AssertSomeFingerprint(source_fp, target_fp)
+
+  source_boot = common.GetBootableImage(
+      "/tmp/boot.img", "boot.img", OPTIONS.source_tmp, "BOOT")
+  target_boot = common.GetBootableImage(
+      "/tmp/boot.img", "boot.img", OPTIONS.target_tmp, "BOOT")
+  updating_boot = (source_boot.data != target_boot.data)
+  if updating_boot:
+	  CopyBootFiles(source_zip, output_zip)
+          #script.EMMCWriteRawImage("/dev/block/mmcblk0p5", "boot.img")
+          #CopyBootimgUpdateTool(output_zip)
+
+  #BEGIN modified by Seac.Cong for MYUI
+  updating_recovery = False
+  #END modified by Seac.Cong for MYUI
+
+  #source_recovery = common.GetBootableImage(
+  #    "/tmp/recovery.img", "recovery.img", OPTIONS.source_tmp, "RECOVERY")
+  #target_recovery = common.GetBootableImage(
+  #    "/tmp/recovery.img", "recovery.img", OPTIONS.target_tmp, "RECOVERY")
+  #updating_recovery = (source_recovery.data != target_recovery.data)
+  
+
+  # Here's how we divide up the progress bar:
+  #  0.1 for verifying the start state (PatchCheck calls)
+  #  0.8 for applying patches (ApplyPatch calls)
+  #  0.1 for unpacking verbatim files, symlinking, and doing the
+  #      device-specific commands.
+
+#  AppendAssertions(script, target_zip)
+#  device_specific.IncrementalOTA_Assertions()
+
+  script.Print("Verifying current system...")
+
+  script.ShowProgress(0.1, 0)
+  total_verify_size = float(sum([i[2].size for i in patch_list]) + 1)
+  if updating_boot:
+    total_verify_size += source_boot.size
+  so_far = 0
+
+  for fn, tf, sf, size, patch_sha in patch_list:
+    script.PatchCheck("/"+fn, tf.sha1, sf.sha1)
+    so_far += sf.size
+    script.SetProgress(so_far / total_verify_size)
+
+  if patch_list or updating_recovery or updating_boot:
+    script.CacheFreeSpaceCheck(largest_source_size)
+
+  device_specific.IncrementalOTA_VerifyEnd()
+
+  script.Comment("---- start making changes here ----")
+
+  if OPTIONS.wipe_user_data:
+    script.Print("Erasing user data...")
+    script.FormatPartition("/data")
+
+#BEGIN Remove system/recovery.img by Seac Cong for Defy
+  script.Print("Removing unneeded files...")
+  script.DeleteFiles(["/"+i[0] for i in verbatim_targets] +
+                     ["/"+i for i in sorted(source_data)
+                            if i not in target_data])
+
+#END Remove system/recovery.img by Seac Cong for Defy
+
+  script.ShowProgress(0.8, 0)
+  total_patch_size = float(sum([i[1].size for i in patch_list]) + 1)
+  if updating_boot:
+    total_patch_size += target_boot.size
+  so_far = 0
+
+  if updating_boot:
+    script.EMMCWriteRawImage("/dev/block/mmcblk0p5", "boot.img")
+    #script.UpdateBoot()
+  else:
+    print "boot image unchanged; skipping."
+
+  script.Print("Patching system files...")
+  deferred_patch_list = []
+  for item in patch_list:
+    fn, tf, sf, size, _ = item
+    if tf.name == "system/build.prop":
+      deferred_patch_list.append(item)
+      continue
+    script.ApplyPatch("/"+fn, "-", tf.size, tf.sha1, sf.sha1, "patch/"+fn+".p")
+    so_far += tf.size
+    script.SetProgress(so_far / total_patch_size)
+
+
+  if updating_recovery:
+    # Is it better to generate recovery as a patch from the current
+    # boot image, or from the previous recovery image?  For large
+    # updates with significant kernel changes, probably the former.
+    # For small updates where the kernel hasn't changed, almost
+    # certainly the latter.  We pick the first option.  Future
+    # complicated schemes may let us effectively use both.
+    #
+    # A wacky possibility: as long as there is room in the boot
+    # partition, include the binaries and image files from recovery in
+    # the boot image (though not in the ramdisk) so they can be used
+    # as fodder for constructing the recovery image.
+    MakeRecoveryPatch(output_zip, target_recovery, target_boot)
+    script.DeleteFiles(["/system/recovery-from-boot.p",
+                        "/system/etc/install-recovery.sh"])
+    print "recovery image changed; including as patch from boot."
+  else:
+    print "recovery image unchanged; skipping."
+
+  script.ShowProgress(0.1, 10)
+
+  (target_symlinks, target_retouch_dummies) = CopySystemFiles(target_zip, None)
+
+  target_symlinks_d = dict([(i[1], i[0]) for i in target_symlinks])
+  temp_script = script.MakeTemporary()
+  Item.GetMetadata(target_zip)
+  Item.Get("system").SetPermissions(temp_script)
+
+  # Note that this call will mess up the tree of Items, so make sure
+  # we're done with it.
+  (source_symlinks, source_retouch_dummies) = CopySystemFiles(source_zip, None)
+  source_symlinks_d = dict([(i[1], i[0]) for i in source_symlinks])
+
+  # Delete all the symlinks in source that aren't in target.  This
+  # needs to happen before verbatim files are unpacked, in case a
+  # symlink in the source is replaced by a real file in the target.
+  to_delete = []
+  for dest, link in source_symlinks:
+    if link not in target_symlinks_d:
+      to_delete.append(link)
+  script.DeleteFiles(to_delete)
+# modified by Henry,for bootimg ota incr update,2012-04-18}
+  if verbatim_targets:
+    script.Print("Unpacking new files...")
+    script.UnpackPackageDir("system", "/system")
+
+  #if updating_recovery:
+  #  script.Print("Unpacking new recovery...")
+  #  script.UnpackPackageDir("recovery", "/system")
+
+  script.Print("Symlinks and permissions...")
+
+  # Create all the symlinks that don't already exist, or point to
+  # somewhere different than what we want.  Delete each symlink before
+  # creating it, since the 'symlink' command won't overwrite.
+  to_create = []
+  for dest, link in target_symlinks:
+    if link in source_symlinks_d:
+      if dest != source_symlinks_d[link]:
+        to_create.append((dest, link))
+    else:
+      to_create.append((dest, link))
+  script.DeleteFiles([i[1] for i in to_create])
+  script.MakeSymlinks(to_create)
+
+#  if OPTIONS.aslr_mode:
+#    script.RetouchBinaries(target_retouch_files)
+#  else:
+#    script.UndoRetouchBinaries(target_retouch_files)
+
+  # Now that the symlinks are created, we can set all the
+  # permissions.
+  script.AppendScript(temp_script)
+
+  # Do device-specific installation (eg, write radio image).
+  device_specific.IncrementalOTA_InstallEnd()
+
+  if OPTIONS.extra_script is not None:
+    script.AppendExtra(OPTIONS.extra_script)
+
+  # Patch the build.prop file last, so if something fails but the
+  # device can still come up, it appears to be the old build and will
+  # get set the OTA package again to retry.
+  script.Print("Patching remaining system files...")
+  for item in deferred_patch_list:
+    fn, tf, sf, size, _ = item
+    script.ApplyPatch("/"+fn, "-", tf.size, tf.sha1, sf.sha1, "patch/"+fn+".p")
+  script.SetPermissions("/system/build.prop", 0, 0, 0644)
+
+  script.AddToZip(target_zip, output_zip)
+  WriteMetadata(metadata, output_zip)
+
+ota_from_target_files.WriteIncrementalOTAPackage = WriteIncrementalOTAPackage
+
+if __name__ == '__main__':
+  try:
+    main(sys.argv[1:])
+  except common.ExternalError, e:
+    print
+    print "   ERROR: %s" % (e,)
+    print
+    sys.exit(1)
